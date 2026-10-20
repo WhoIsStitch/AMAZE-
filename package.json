@@ -1,0 +1,10 @@
+{
+  "name": "glyde",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Glyde: infinite 3D slide-and-paint maze game (offline PWA)",
+  "scripts": {
+    "test": "node tools/test-levels.mjs 60"
+  }
+}

@@ -1,0 +1,47 @@
+name: Deploy Glyde to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The generator is the heart of "infinite levels": make sure every sampled level is still solvable.
+      - name: Verify level generator
+        run: node tools/test-levels.mjs 60
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r index.html manifest.webmanifest sw.js css js vendor fonts icons _site/
+          touch _site/.nojekyll
+          # new cache name per deploy, so installed copies pick up updates
+          sed -i "s/glyde-v1/glyde-${GITHUB_SHA::8}/" _site/sw.js
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
