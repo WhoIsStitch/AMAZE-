@@ -530,7 +530,7 @@ export function openSettings({ skipCost }) {
         <div class="row">${svg('gfx')}<span class="sp">GRAPHICS</span><div class="seg"><button data-q="high" class="${s.settings.quality === 'high' ? 'on' : ''}">HIGH</button><button data-q="low" class="${s.settings.quality === 'low' ? 'on' : ''}">LOW</button></div></div>
       </div>
       <div class="btnrow" style="margin-top:16px;flex-wrap:wrap"><button class="btn blue small" data-skip>${svg('skip')}SKIP LEVEL ${coinChip(skipCost)}</button><button class="btn red small" data-reset>RESET</button></div>
-      <div class="fine">GLYDE · works fully offline<br>Add it to your Home Screen for fullscreen play.</div>
+      <div class="fine">GLYDE · works fully offline<br>Add it to your Home Screen for fullscreen play.<br>iPhone vibration needs iOS 17.4+ and Settings → Sounds &amp; Haptics → System Haptics on.</div>
     </div>`);
   tap($('[data-x]', rec.el), () => closeScreen(rec));
   $$('[data-sw]', rec.el).forEach((b) => tap(b, () => {

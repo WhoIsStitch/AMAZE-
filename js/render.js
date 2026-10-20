@@ -153,6 +153,8 @@ const _e = new THREE.Euler();
 const _col = new THREE.Color();
 const _col2 = new THREE.Color();
 const QID = new THREE.Quaternion();
+const _qo = new THREE.Quaternion();
+const _eo = new THREE.Euler();
 
 /** Soft studio environment so metals and glossy balls have something to reflect. */
 export function createEnv(renderer, top = '#bfe3ff', bottom = '#4a3b52', warm = '#ffe2bd') {
@@ -220,6 +222,8 @@ export class Renderer3D {
     this.board = new THREE.Group();
     this.scene.add(this.board);
     this.leaving = [];
+    this.outro = null;
+    this.landed = true;
 
     this.particles = new Particles(900, false);
     this.glows = new Particles(500, true);
@@ -489,7 +493,8 @@ export class Renderer3D {
 
     // base slab + soft ground shadow
     const slab = new THREE.Mesh(roundedBox(L.w + 0.5, 0.7, L.h + 0.5, 0.25, 2), mats.base);
-    slab.position.set(0, -TILE_H - 0.35 + 0.02, 0);
+    this.slabY = -TILE_H - 0.35 + 0.02;
+    slab.position.set(0, this.slabY, 0);
     slab.receiveShadow = true;
     this.board.add(slab);
     this.slab = slab;
@@ -533,7 +538,10 @@ export class Renderer3D {
     this.sun.target.updateMatrixWorld();
 
     this.fit();
+    this.outro = null;
     this.introT = opts.intro === false ? 99 : (opts.leave ? -0.3 : 0);
+    this.landed = opts.intro === false;
+    if (opts.intro !== false) this.onEvent('intro', {});
     this.syncToState(st, true);
     this.camZoom = 1;
     this.camera.position.copy(this.target).addScaledVector(_p.set(0, Math.sin(this.pitch), Math.cos(this.pitch)), this.dist * 1.0);
@@ -681,6 +689,51 @@ export class Renderer3D {
     this.moving = true;
     this.clearHint();
     this.onEvent('whoosh', { steps: info.steps });
+  }
+
+  /**
+   * Level exit: a ripple spreads out from the ball. Each tile lifts slightly, then tumbles away
+   * and shrinks. Resolves when the whole board is gone (the next loadLevel replaces it).
+   */
+  playOutro() {
+    if (!this.L) return Promise.resolve();
+    if (this.outro) return this.outro.promise;
+    const L = this.L, N = L.w * L.h, bp = this.ballPos;
+    let maxDist = 0.001;
+    for (let i = 0; i < N; i++) { const c = this.cell(i); maxDist = Math.max(maxDist, Math.hypot(c.x - bp.x, c.z - bp.z)); }
+    const k = Math.min(0.045, 0.4 / maxDist); // the whole ripple always takes about 0.4s, however big the board
+    const rng = mulberry32(L.n * 7 + 3);
+    const od = new Float32Array(N);
+    let max = 0;
+    for (let i = 0; i < N; i++) {
+      const c = this.cell(i);
+      od[i] = Math.hypot(c.x - bp.x, c.z - bp.z) * k + rng() * 0.08;
+      if (od[i] > max) max = od[i];
+    }
+    const o = { t: 0, od, max, done: false, resolve: null, promise: null };
+    o.promise = new Promise((r) => { o.resolve = r; });
+    this.outro = o;
+    this.clearHint();
+    this.queueHint = null;
+    if (this.startRing) this.startRing.visible = false;
+    this.shake = Math.max(this.shake, 0.03);
+    this.onEvent('outro', {});
+    return o.promise;
+  }
+
+  /** Sets this._dy / this._s / _qo for instance cell i during the outro. Returns false when it hasn't started falling yet. */
+  outroFx(i) {
+    const o = this.outro;
+    if (!o) return false;
+    const q = o.t - o.od[i];
+    if (q <= 0) return false;
+    const fall = Math.max(0, q - 0.1);
+    this._dy = 0.2 * clamp(q / 0.1) - fall * fall * 20; // tiny anticipation lift, then gravity
+    this._s = Math.max(0.0001, 1 - fall * 1.7);
+    const h1 = (o.od[i] * 977) % 1, h2 = (o.od[i] * 313) % 1;
+    _eo.set((h1 - 0.5) * q * 4.5, 0, (h2 - 0.5) * q * 4.5);
+    _qo.setFromEuler(_eo);
+    return true;
   }
 
   /** CSS-pixel screen position of a world point (for the tutorial hand). */
@@ -899,6 +952,29 @@ export class Renderer3D {
     this.time += dt;
     this.introT += dt;
     if (!this.L) { this.particles.update(dt); this.glows.update(dt); return; }
+    if (this.outro) {
+      const o = this.outro;
+      o.t += dt;
+      const q = Math.max(0, o.t - o.max * 0.6 - 0.1);
+      if (this.slab) {
+        this.slab.position.y = this.slabY - q * q * 20;
+        this.slab.scale.setScalar(Math.max(0.0001, 1 - q * 1.5));
+      }
+      if (this.groundBlob) this.groundBlob.material.opacity = 0.55 * clamp(1 - (o.t - o.max) / 0.4);
+      if (!o.done && o.t > o.max + 0.6) { o.done = true; o.resolve(); }
+    }
+    if (this.slab && !this.outro) {
+      // the tray springs up just ahead of its tiles
+      const e = this.introT < 0.7 ? easeOutBack(clamp(this.introT / 0.55)) : 1;
+      this.slab.scale.setScalar(Math.max(0.0001, e));
+      this.slab.position.y = this.slabY - (1 - e) * 2.2;
+    }
+    if (!this.landed && this.introT > this.maxDelay + 0.75) {
+      this.landed = true;
+      this.shake = Math.max(this.shake, 0.02);
+      this.burst(this.ballPos, '#ffffff', 14);
+      this.onEvent('landed', {});
+    }
     this.step(dt);
     this.updateBoardMatrices(dt);
     this.updateBall(dt);
@@ -952,9 +1028,11 @@ export class Renderer3D {
       const pop = t - this.popAt[k];
       if (pop > 0 && pop < 0.5) y += Math.sin((pop / 0.5) * Math.PI) * 0.16 * (1 - pop / 0.5);
       if (p < 1) { const e = easeOutBack(p); s = Math.max(0.0001, e); y += (1 - e) * -2.2; }
+      let rq = QID;
+      if (this.outroFx(i)) { y += this._dy; s *= this._s; rq = _qo; }
       _p.set(c.x, y, c.z);
       _s.set(s, s, s);
-      _m.compose(_p, QID, _s);
+      _m.compose(_p, rq, _s);
       fm.setMatrixAt(k, _m);
       fm.setColorAt(k, _col.setRGB(r, g, b));
     }
@@ -981,14 +1059,16 @@ export class Renderer3D {
         const e = easeOutBack(p);
         s = Math.max(0.0001, e); y += (1 - e) * -2.5;
       }
+      let so = 1, rq = QID;
+      if (this.outroFx(i)) { y += this._dy; so = this._s; rq = _qo; }
       _p.set(c.x, y, c.z);
-      _s.set(1, s, 1);
-      _m.compose(_p, QID, _s);
+      _s.set(so, s * so, so);
+      _m.compose(_p, rq, _s);
       wmesh.setMatrixAt(w, _m);
       if (this.studMesh) {
-        _p.set(c.x, y + (WALL_H / 2 + 0.07) * s, c.z);
-        _s.set(s, s, s);
-        _m.compose(_p, QID, _s);
+        _p.set(c.x, y + (WALL_H / 2 + 0.07) * s * so, c.z);
+        _s.set(s * so, s * so, s * so);
+        _m.compose(_p, rq, _s);
         this.studMesh.setMatrixAt(w, _m);
       }
     }
@@ -1008,6 +1088,7 @@ export class Renderer3D {
           if (age > 0.32) s = 0.0001;
         } else if (taken === LONG) s = 0.0001;
         if (intro) { const p = ip(i, 0.3); s *= Math.max(0.0001, easeOutBack(p)); }
+        if (this.outroFx(i)) { y += this._dy; s *= this._s; }
         _p.set(c.x, y, c.z);
         _e.set(0, t * 2.6 + i * 0.7, 0);
         _q.setFromEuler(_e);
@@ -1066,7 +1147,8 @@ export class Renderer3D {
       const q = t - this.celebrating;
       yoff += Math.abs(Math.sin(q * 7)) * 0.5 * Math.exp(-q * 2.2);
     }
-    const mul = this.ballScaleMul * introS;
+    let mul = this.ballScaleMul * introS;
+    if (this.outro && this.outroFx(this.cellFromPos())) { yoff += this._dy; mul *= this._s; }
     this.ball.position.set(p.x + ox, p.y + yoff, p.z + oz);
     this.ball.scale.set(sx * mul, sy * mul, sz * mul);
     this.ballBlob.position.set(p.x + ox, 0.07, p.z + oz);
@@ -1082,6 +1164,10 @@ export class Renderer3D {
   updateDyn(dt) {
     const t = this.time;
     for (const d of this.dyn) {
+      if (d.by === undefined) d.by = d.grp.position.y;
+      if (this.outro) {
+        if (this.outroFx(d.cell)) { d.grp.position.y = d.by + this._dy; d.grp.scale.setScalar(this._s); }
+      }
       const pulse = clamp(1 - (t - d.pulse) / 0.5);
       if (d.kind === 'portal') {
         d.disc.rotation.y = t * 1.8 + d.ph;
@@ -1132,7 +1218,8 @@ export class Renderer3D {
     this.camZoom += (zoom - this.camZoom) * Math.min(1, dt * 4);
     // intro: camera glides in from a little further away
     const intro = this.introT < 1.2 ? 1 + (1 - easeOutCubic(this.introT / 1.2)) * 0.18 : 1;
-    const d = this.dist * this.camZoom * intro;
+    const out = this.outro ? 1 + 0.06 * easeOutCubic(clamp(this.outro.t / 0.9)) : 1;
+    const d = this.dist * this.camZoom * intro * out;
     const az = sway;
     _p.set(Math.sin(az) * Math.cos(pitch), Math.sin(pitch), Math.cos(az) * Math.cos(pitch)).multiplyScalar(d);
     this.camera.position.copy(this.target).add(_p);

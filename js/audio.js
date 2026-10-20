@@ -200,6 +200,23 @@ export const sfx = {
     tone({ f: 200, f2: 150, type: 'square', dur: 0.16, vol: 0.12 });
     tone({ f: 200, f2: 150, type: 'square', t: 0.12, dur: 0.16, vol: 0.12 });
   },
+  /** board ripples away */
+  outro() {
+    if (!sfxOn || !ctx) return;
+    noise({ dur: 0.6, vol: 0.2, f: 3200, f2: 250, q: 1.2 });
+    tone({ f: 420, f2: 90, type: 'sine', dur: 0.55, vol: 0.22 });
+  },
+  /** new board springs up */
+  rise() {
+    if (!sfxOn || !ctx) return;
+    noise({ dur: 0.5, vol: 0.12, f: 300, f2: 2600, q: 1.4 });
+    [0, 4, 7, 12].forEach((s, i) => tone({ f: mtof(67 + s), t: 0.08 + i * 0.07, dur: 0.2, vol: 0.09, type: 'triangle' }));
+  },
+  land() {
+    if (!sfxOn || !ctx) return;
+    tone({ f: 140, f2: 55, type: 'sine', dur: 0.2, vol: 0.32 });
+    tone({ f: mtof(79), t: 0.02, dur: 0.18, vol: 0.1, type: 'sine' });
+  },
   tickTock() {
     if (!sfxOn || !ctx) return;
     tone({ f: 1000, type: 'square', dur: 0.04, vol: 0.06 });

@@ -1,44 +1,58 @@
-// Haptics. iOS Safari has no navigator.vibrate, but toggling a hidden <input switch> from a user
-// gesture produces a real tap (iOS 17.4+). Both are best-effort and silently do nothing otherwise.
+// Haptics.
+//  - Android / most browsers: navigator.vibrate.
+//  - iOS Safari has no vibrate API, but toggling a hidden <input type="checkbox" switch> makes the
+//    system play its switch haptic (iOS 17.4+; needs Settings > Sounds & Haptics > System Haptics on).
+//    iOS only allows it shortly after a touch, so the game also fires a tick the moment a swipe or
+//    button press is recognised, and keeps follow-up pulses close together.
 
 let enabled = true;
 let label = null;
-let input = null;
+let lastFire = 0;
 
 function ensure() {
   if (label || typeof document === 'undefined') return;
   try {
     label = document.createElement('label');
     label.setAttribute('aria-hidden', 'true');
-    label.style.cssText = 'position:fixed;left:-100px;top:-100px;width:1px;height:1px;opacity:0;pointer-events:none';
-    input = document.createElement('input');
+    label.style.display = 'none';
+    const input = document.createElement('input');
     input.type = 'checkbox';
     input.setAttribute('switch', '');
-    input.id = 'glyde-haptic';
-    label.htmlFor = input.id;
     label.appendChild(input);
-    document.body.appendChild(label);
+    document.head.appendChild(label);
   } catch (e) { label = null; }
 }
 
-function fire() {
+const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+
+/** n pulses, `gap` ms apart. `ms` is the pulse length on devices that support vibrate(). */
+function pulse(n, gap, ms) {
   if (!enabled) return;
-  if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* ignore */ } return; }
+  const now = performance.now();
+  if (now - lastFire < 28) return; // iOS merges pulses that are too close together
+  lastFire = now;
+  if (canVibrate) {
+    const pat = [];
+    for (let i = 0; i < n; i++) { pat.push(ms); if (i < n - 1) pat.push(gap - ms > 8 ? gap - ms : 8); }
+    try { navigator.vibrate(pat); } catch (e) { /* ignore */ }
+    return;
+  }
   ensure();
-  try { label && label.click(); } catch (e) { /* ignore */ }
+  const click = () => { try { label && label.click(); } catch (e) { /* ignore */ } };
+  click();
+  for (let i = 1; i < n; i++) setTimeout(click, i * gap);
 }
 
 export const haptics = {
   set(on) { enabled = on; },
-  tap() { fire(); },
-  bump(power = 1) {
-    if (!enabled) return;
-    if (navigator.vibrate) { try { navigator.vibrate(power > 4 ? 22 : 12); } catch (e) { /* ignore */ } return; }
-    fire();
-  },
-  success() {
-    if (!enabled) return;
-    if (navigator.vibrate) { try { navigator.vibrate([14, 40, 14, 40, 30]); } catch (e) { /* ignore */ } return; }
-    fire(); setTimeout(fire, 90); setTimeout(fire, 180);
-  },
+  /** light tick: buttons, swipes, tiles rolling past */
+  tap() { pulse(1, 0, 8); },
+  tick() { pulse(1, 0, 6); },
+  /** wall hit: stronger the harder you hit */
+  bump(power = 1) { if (power > 5) pulse(2, 55, 22); else if (power > 2) pulse(1, 0, 16); else pulse(1, 0, 10); },
+  heavy() { pulse(2, 65, 26); },
+  success() { pulse(3, 85, 20); },
+  error() { pulse(2, 120, 34); },
+  /** board ripple: a quick rumble */
+  rumble() { pulse(4, 60, 14); },
 };

@@ -1,0 +1,24 @@
+// Simulates iOS Safari (no navigator.vibrate) and counts how many times the hidden switch gets toggled.
+import { chromium } from 'playwright';
+import http from 'node:http';
+import { readFileSync, existsSync } from 'node:fs';
+import { extname, join } from 'node:path';
+const root = new URL('..', import.meta.url).pathname;
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.woff2': 'font/woff2' };
+const server = http.createServer((q, s) => { let p = q.url.split('?')[0]; if (p.endsWith('/')) p += 'index.html'; const f = join(root, p); if (!existsSync(f)) { s.writeHead(404); s.end(); return; } s.writeHead(200, { 'content-type': types[extname(f)] || 'application/octet-stream' }); s.end(readFileSync(f)); });
+await new Promise((r) => server.listen(0, r));
+const b = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+await ctx.addInitScript(() => { Object.defineProperty(Navigator.prototype, 'vibrate', { value: undefined, configurable: true }); });
+const page = await ctx.newPage();
+const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+await page.goto(`http://localhost:${server.address().port}/`);
+await page.waitForFunction(() => window.__glyde && window.__glyde.G.L && window.__glyde.renderer.introT > 3, null, { timeout: 90000 });
+await page.evaluate(() => { window.__clicks = 0; document.addEventListener('change', (e) => { if (e.target.matches('input[switch]')) window.__clicks++; }, true); });
+const sol = await page.evaluate(() => window.__glyde.G.L.solution);
+await page.keyboard.press(['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'][sol[0]]);
+await page.waitForFunction(() => !window.__glyde.G.busy, null, { timeout: 30000 });
+await page.waitForTimeout(500);
+console.log('switch toggles after one swipe:', await page.evaluate(() => window.__clicks), '| switch element present:', await page.evaluate(() => !!document.querySelector('label input[switch]')));
+console.log(errs.join('\n') || 'no errors');
+await b.close(); server.close();

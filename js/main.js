@@ -77,6 +77,12 @@ async function boot() {
   setInterval(() => { UI.updateDailyChip(); UI.updateDots(); }, 30000);
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    // when a newer version of the game has been installed in the background, reload into it once
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !reloaded) { reloaded = true; location.reload(); }
+    });
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
   // greet returning players with their daily reward
@@ -185,7 +191,7 @@ function wireButtons() {
     const s = Store.S().settings;
     if (k === 'sfx') Audio.setSfx(s.sfx);
     if (k === 'music') Audio.setMusic(s.music);
-    if (k === 'haptics') haptics.set(s.haptics);
+    if (k === 'haptics') { haptics.set(s.haptics); if (s.haptics) haptics.success(); } // feel it straight away
     if (k === 'quality') renderer.setQuality(s.quality);
   };
   UI.hooks.resetProgress = () => { Store.reset(); location.reload(); };
@@ -204,7 +210,11 @@ function takenCells() {
 async function startLevel(mode, n, opts = {}) {
   const token = ++G.token;
   G.loading = true;
-  const L = await getLevel(n, mode);
+  hideHand();
+  // old board ripples away while the next level is generated in the background
+  const L = !opts.first && renderer.L
+    ? (await Promise.all([getLevel(n, mode), renderer.playOutro()]))[0]
+    : await getLevel(n, mode);
   if (token !== G.token) return;
   const S = Store.S();
   G.mode = mode; G.n = n; G.L = L;
@@ -214,7 +224,7 @@ async function startLevel(mode, n, opts = {}) {
   G.replay = n < S.level[mode];
   G.undos = 0; G.hints = 0;
   if (!S.taken || S.taken.k !== `${mode}:${n}`) S.taken = { k: `${mode}:${n}`, c: [] };
-  renderer.loadLevel(L, G.st, { intro: true, coins: !G.replay, leave: !opts.first && !opts.noLeave, taken: S.taken.c });
+  renderer.loadLevel(L, G.st, { intro: true, coins: !G.replay, taken: S.taken.c });
   refreshHud();
   UI.updateDots();
   prefetch(n + 1, mode);
@@ -297,6 +307,7 @@ function doMove(dir) {
   G.history.push(prev);
   G.dirs.push(dir);
   G.busy = true;
+  haptics.tap(); // fires inside the touch gesture, which is what lets iOS play the haptic
   hideHand();
   if (G.mode === 'time') G.timing = true;
   Store.stat('totalMoves');
@@ -381,6 +392,7 @@ function hint() {
   const cells = r.events.filter((e) => e.t === 0 || e.t === 1).map((e) => e.i);
   renderer.showHint(cells, d);
   sfx.hint();
+  haptics.success();
   UI.updateDots();
 }
 
@@ -402,7 +414,7 @@ function updateHand() {
 function onRenderEvent(type, d) {
   switch (type) {
     case 'whoosh': sfx.whoosh(d.steps); break;
-    case 'paint': sfx.tick(d.step); break;
+    case 'paint': sfx.tick(d.step); if (d.step % 2 === 0) haptics.tick(); break;
     case 'coin': {
       Store.addCoins(1, true);
       UI.setCoins(Store.S().coins, true);
@@ -412,10 +424,13 @@ function onRenderEvent(type, d) {
     }
     case 'impact': sfx.thud(d.power); haptics.bump(d.power); break;
     case 'blocked': sfx.blocked(); haptics.tap(); break;
-    case 'portal': sfx.portal(); Store.stat('portalsUsed'); break;
-    case 'arrow': sfx.arrow(); break;
-    case 'seal': sfx.seal(); Store.stat('sealsClosed'); break;
-    case 'sticky': sfx.sticky(); Store.stat('stickyStops'); haptics.bump(5); break;
+    case 'portal': sfx.portal(); haptics.heavy(); Store.stat('portalsUsed'); break;
+    case 'arrow': sfx.arrow(); haptics.tap(); break;
+    case 'seal': sfx.seal(); haptics.bump(6); Store.stat('sealsClosed'); break;
+    case 'outro': sfx.outro(); haptics.rumble(); break;
+    case 'intro': sfx.rise(); break;
+    case 'landed': sfx.land(); haptics.bump(3); break;
+    case 'sticky': sfx.sticky(); Store.stat('stickyStops'); haptics.bump(6); break;
     default: break;
   }
 }
@@ -493,6 +508,7 @@ function goNext(chest) {
 function fail(kind) {
   if (G.over) return;
   G.over = true;
+  haptics.error();
   hideHand();
   setTimeout(() => {
     UI.showFail({
