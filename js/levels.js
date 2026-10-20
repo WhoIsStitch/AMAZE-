@@ -10,7 +10,11 @@ let seq = 0;
 function startWorker() {
   if (worker || workerBroken) return;
   try {
-    worker = new Worker(new URL('./gen-worker.js', import.meta.url), { type: 'module' });
+    // single-file builds embed the worker source in the page; otherwise load it as a module worker
+    const inline = document.getElementById('gen-worker-src');
+    worker = inline
+      ? new Worker(URL.createObjectURL(new Blob([inline.textContent], { type: 'text/javascript' })))
+      : new Worker(new URL('./gen-worker.js', import.meta.url), { type: 'module' });
     worker.onmessage = (e) => {
       const { id, L, error } = e.data;
       const p = pending.get(id);

@@ -93,7 +93,8 @@ function applySettings() {
 function applyThemeCss(t) {
   document.documentElement.style.setProperty('--bg1', t.bg[0]);
   document.documentElement.style.setProperty('--bg2', t.bg[1]);
-  document.querySelector('meta[name="theme-color"]').setAttribute('content', t.bg[0]);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', t.bg[0]);
 }
 
 /** Tell the 3D camera how much room the HUD leaves for the board. */
